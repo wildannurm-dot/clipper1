@@ -13,44 +13,46 @@ duration = st.text_input("Durasi Klip (dalam detik, misal: 30):", "30")
 
 if st.button("Gunting Video ✂️"):
     if video_url:
-        st.info("Sedang memproses video... Mohon tunggu (proses ini bergantung pada durasi dan server).")
+        st.info("Sedang memproses... Langkah ini mengunduh video terlebih dahulu, mohon tunggu beberapa saat.")
         
+        temp_download = "video_asli.mp4"
         output_filename = "clip.mp4"
         
-        # Hapus file lama jika ada
-        if os.path.exists(output_filename):
-            os.remove(output_filename)
-            
+        # Hapus file lama jika ada agar tidak bentrok
+        for f in [temp_download, output_filename]:
+            if os.path.exists(f):
+                os.remove(f)
+                
         try:
-            # Perintah yt-dlp yang efisien menggunakan external downloader ffmpeg untuk memotong langsung
-            # Ini menghemat kuota server dan mempercepat proses
-            command = [
+            # Langkah 1: Unduh video YouTube dengan format terbaik yang sudah menggabungkan video+audio (maksimal 720p agar cepat dan ramah server gratisan)
+            st.write("📥 Mengunduh video asli dari YouTube...")
+            download_command = [
                 "yt-dlp",
-                "-g",  # Mengambil URL streaming mentah dari YouTube
+                "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]", # Cari mp4 terbaik yang ada audio+video
+                "--max-filesize", "50M", # Batasi ukuran agar server Streamlit tidak crash
+                "-o", temp_download,
                 video_url
             ]
+            subprocess.run(download_command, check=True)
             
-            # Jalankan yt-dlp untuk mendapatkan URL video asli
-            result = subprocess.run(command, capture_output=True, text=True, check=True)
-            urls = result.stdout.strip().split('\n')
-            
-            if urls:
-                video_stream_url = urls[0] # Ambil stream pertama (biasanya sudah include audio/video gabungan di format tertentu)
+            # Cek apakah file asli berhasil diunduh
+            if os.path.exists(temp_download):
+                st.write("✂️ Memotong video sesuai durasi...")
                 
-                # Proses pemotongan menggunakan FFmpeg langsung dari URL streaming
+                # Langkah 2: Potong video lokal menggunakan FFmpeg
                 ffmpeg_command = [
                     "ffmpeg",
                     "-ss", start_time,
-                    "-i", video_stream_url,
+                    "-i", temp_download,
                     "-t", duration,
                     "-c:v", "libx264",
                     "-c:a", "aac",
-                    "-strict", "experimental",
+                    "-async", "1",
                     output_filename
                 ]
-                
                 subprocess.run(ffmpeg_command, check=True)
                 
+                # Langkah 3: Sediakan tombol download jika berhasil
                 if os.path.exists(output_filename):
                     st.success("Video berhasil dipotong!")
                     with open(output_filename, "rb") as file:
@@ -61,11 +63,17 @@ if st.button("Gunting Video ✂️"):
                             mime="video/mp4"
                         )
                 else:
-                    st.error("Gagal membuat file klip.")
+                    st.error("Gagal memotong video setelah diunduh.")
             else:
-                st.error("Gagal mendapatkan stream URL dari YouTube.")
+                st.error("Gagal mengunduh video dari YouTube. Format tidak didukung atau video terlalu besar.")
                 
+        except subprocess.CalledProcessError as e:
+            st.error(f"Terjadi kesalahan pada sistem pemotong (FFmpeg/yt-dlp). Error code: {e.returncode}")
         except Exception as e:
             st.error(f"Terjadi kesalahan: {e}")
+        finally:
+            # Bersihkan file sampah di server setelah selesai
+            if os.path.exists(temp_download):
+                os.remove(temp_download)
     else:
         st.warning("Silakan masukkan URL YouTube terlebih dahulu.")
